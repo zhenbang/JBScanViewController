@@ -12,7 +12,7 @@
 #define VIEW_SIZE_HEIGHT  self.view.bounds.size.height  //当前View高度
 #define VIEW_SIZE_WIDTH   self.view.bounds.size.width   //当前View宽度
 #define SCAN_RECT_RATIO   0.7                           //扫码区域与当前View宽的比例
-#define SCAN_OFFSET       -50                           //扫描框偏移量(大于0往下，小于0往上)
+#define SCAN_OFFSET       -40                           //扫描框偏移量(大于0往下，小于0往上)
 #define SCAN_FRAME_ANIMATION_DURATION  0.2              //扫描框生成动画时长
 
 @interface JBScanViewController ()<AVCaptureMetadataOutputObjectsDelegate,UINavigationControllerDelegate,UIImagePickerControllerDelegate>{
@@ -27,9 +27,22 @@
 
 @implementation JBScanViewController
 
+#pragma mark - ScanResult
+/** 扫描获取字符串触发 */
+- (void)scanResultString:(NSString*)result{
+    //提示扫描结果(演示)
+    [self alertControllerMessage:result];
+}
+
+/** 扫描获取对象触发 */
+- (void)scanResult:(id)result{
+    NSLog(@">>>%@",result);
+}
+
+#pragma mark - LifeCycle
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"扫描二维码";
+    self.title = @"扫码";
     self.view.backgroundColor = [UIColor blackColor];
     //相册入口
     UIBarButtonItem *rightButton = [[UIBarButtonItem alloc] initWithTitle:@"🏯" style:UIBarButtonItemStylePlain target:self action:@selector(scanImage)];
@@ -40,6 +53,8 @@
 
 - (void)viewWillAppear:(BOOL)animated{
     [super viewWillAppear:animated];
+    //屏蔽自动锁屏
+    [UIApplication sharedApplication].idleTimerDisabled=YES;
     if (session) [session startRunning];
 }
 
@@ -50,9 +65,12 @@
 
 - (void)viewWillDisappear:(BOOL)animated{
     [super viewWillDisappear:animated];
+    //打开自动锁屏
+    [UIApplication sharedApplication].idleTimerDisabled=YES;
     [session stopRunning];
 }
 
+#pragma mark - LoadOperation
 /** 设置界面 */
 - (void)setupScanUI{
     //扫描框
@@ -79,7 +97,7 @@
     label.frame  = CGRectMake((VIEW_SIZE_WIDTH-200)/2,(VIEW_SIZE_HEIGHT-30)/2, 200, 30);
 }
 
-/** 初始化相机扫描 */
+/** 初始化相机扫描(部分UI参数更改在此方法) */
 - (void)initScan{
     // Do any additional setup after loading the view, typically from a nib.
     //获取摄像设备
@@ -119,6 +137,9 @@
     [self loadScanAnimation];
     //扫描框四角动画
     [self.view.layer addSublayer:[self getFourCornerLayerColor:[UIColor greenColor] lineWidth:2 lineLenghRatio:0.05]];
+    //扫描线
+    [self.view.layer addSublayer:[self getScanLine:[UIColor greenColor] height:2 duration:2.5]];
+    
     //提示文字
     UILabel *remindLabel = [[UILabel alloc] initWithFrame:CGRectMake(VIEW_SIZE_WIDTH*0.1, (VIEW_SIZE_HEIGHT-VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)/2+VIEW_SIZE_WIDTH*SCAN_RECT_RATIO+SCAN_OFFSET, VIEW_SIZE_WIDTH*0.8, 30)];
     remindLabel.text = @"将二维码/条形码放入框内，即可自动扫描";
@@ -185,7 +206,56 @@
     return scanBoxLayer;
 }
 
-/** 加载扫描框动画 */
+
+/**
+ 生成扫描线
+
+ @param color 扫描线颜色
+ @param height 扫描线厚度
+ @param duration 扫描线动画时间
+ @return 扫描线Layer
+ */
+- (CAGradientLayer*)getScanLine:(UIColor*)color height:(float)height duration:(float)duration{
+    //扫描线生成和遮罩
+    CAShapeLayer *scanlineMask = [[CAShapeLayer alloc] init];
+    UIBezierPath *scanLineMaskPath = [UIBezierPath  bezierPathWithOvalInRect:CGRectMake(0, 0, VIEW_SIZE_WIDTH*SCAN_RECT_RATIO*0.95, height)];
+    scanlineMask.path = scanLineMaskPath.CGPath;
+    scanlineMask.strokeColor = color.CGColor;
+    scanlineMask.fillColor = color.CGColor;
+    CAGradientLayer *scanLineLayer = [CAGradientLayer layer];
+    scanLineLayer.frame    = CGRectMake(0, 0, VIEW_SIZE_WIDTH*SCAN_RECT_RATIO*0.95, height);
+    scanLineLayer.position = CGPointMake(VIEW_SIZE_WIDTH/2, VIEW_SIZE_HEIGHT/2+SCAN_OFFSET);
+    scanLineLayer.colors = @[(__bridge id)[color colorWithAlphaComponent:0.05].CGColor,
+                          (__bridge id)[color colorWithAlphaComponent:0.8].CGColor,
+                          (__bridge id)[color colorWithAlphaComponent:0.05].CGColor];
+    scanLineLayer.locations  = @[@(0.05), @(0.5), @(0.95)];
+    scanLineLayer.startPoint = CGPointMake(0.5, 0.5);
+    scanLineLayer.endPoint   = CGPointMake(0.5, 0.5);
+    scanLineLayer.mask = scanlineMask;
+    //扫描线生成动画
+    CABasicAnimation *scanLinePositionAnimation = [CABasicAnimation animationWithKeyPath:@"position"];
+    scanLinePositionAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(VIEW_SIZE_WIDTH/2, (VIEW_SIZE_HEIGHT-VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)/2+SCAN_OFFSET+height)];
+    CABasicAnimation *scanLineStartPointAnimation = [CABasicAnimation animationWithKeyPath:@"startPoint"];
+    scanLineStartPointAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(0, 0)];
+    CABasicAnimation *scanLineEndPointAnimation = [CABasicAnimation animationWithKeyPath:@"endPoint"];
+    scanLineEndPointAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(1, 0)];
+    CAAnimationGroup *initialAnimations = [CAAnimationGroup animation];
+    initialAnimations.animations = @[scanLinePositionAnimation,scanLineStartPointAnimation,scanLineEndPointAnimation];
+    initialAnimations.duration=SCAN_FRAME_ANIMATION_DURATION;
+    initialAnimations.removedOnCompletion = NO;
+    initialAnimations.fillMode = kCAFillModeForwards;
+    [scanLineLayer addAnimation:initialAnimations forKey:nil];
+    //扫描动画
+    CABasicAnimation *scanAnimation = [CABasicAnimation animationWithKeyPath:@"position"];
+    scanAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(VIEW_SIZE_WIDTH/2, (VIEW_SIZE_HEIGHT-VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)/2+SCAN_OFFSET-height+VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)];
+    scanAnimation.duration = duration;
+    scanAnimation.repeatCount = HUGE_VALF;
+    scanAnimation.removedOnCompletion = NO;
+    [scanLineLayer addAnimation:scanAnimation forKey:nil];
+    return scanLineLayer;
+}
+
+/** 加载扫描框生成动画 */
 - (void)loadScanAnimation{
     UIBezierPath *maskFinalPath = [UIBezierPath bezierPathWithRect:CGRectMake(0, 0, VIEW_SIZE_WIDTH, VIEW_SIZE_HEIGHT)];
     [maskFinalPath appendPath:[[UIBezierPath bezierPathWithRoundedRect:CGRectMake(
@@ -207,10 +277,8 @@
     if (metadataObjects.count>0) {
         [session stopRunning];
         AVMetadataMachineReadableCodeObject * metadataObject = [metadataObjects objectAtIndex : 0 ];
-        [self alertControllerMessage:metadataObject.stringValue];
-        
-        /** >>>>>>>>>相机扫描结果在此处获得<<<<<<<<< */
-        
+        [self scanResultString:metadataObject.stringValue];
+        [self scanResult:metadataObject];
         //输出扫描字符串
         NSLog(@"%@",metadataObject.stringValue);
     }
@@ -231,14 +299,9 @@
             //取第一个元素就是二维码所存放的文本信息
             CIQRCodeFeature *feature = features[0];
             NSString *scannedResult = feature.messageString;
-            
-            /** >>>>>>>>>图片扫描结果在此处获得<<<<<<<<< */
-            
             //通过对话框的形式呈现(临时)
-            [self alertControllerMessage:scannedResult];
-            
-            
-            
+            [self scanResultString:scannedResult];
+            [self scanResult:feature];
         }else{
             [self alertControllerMessage:@"未检测到二维码"];
         }
