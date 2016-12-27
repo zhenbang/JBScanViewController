@@ -9,11 +9,19 @@
 #import <AVFoundation/AVFoundation.h>
 #import <MobileCoreServices/MobileCoreServices.h>
 
+//定值
 #define VIEW_SIZE_HEIGHT  self.view.bounds.size.height  //当前View高度
 #define VIEW_SIZE_WIDTH   self.view.bounds.size.width   //当前View宽度
-#define SCAN_RECT_RATIO   0.7                           //扫码区域与当前View宽的比例
-#define SCAN_OFFSET       -40                           //扫描框偏移量(大于0往下，小于0往上)
-#define SCAN_FRAME_ANIMATION_DURATION  0.2              //扫描框生成动画时长
+//可更改变量
+#define SCAN_RECT_RATIO                 0.7                           //扫码区域与当前View宽的比例
+#define SCAM_FRAME_RECT_RATIO           0.05                          //扫描框四角的角边长与扫描框边长的比例
+#define SCAN_OFFSET                     -40                           //扫描框偏移量(大于0往下，小于0往上)
+#define SCAN_FRAME_ANIMATION_DURATION   0.2                           //扫描框生成动画时长
+#define SCAN_LINE_ANIMATION_DURATION    2.5                           //扫描线循环一个周期的时间
+#define SCAN_FRAME_COLOR                [UIColor greenColor]          //扫描框颜色
+#define SCAN_LINE_COLOR                 [UIColor greenColor]          //扫描线颜色
+#define SCAN_FRAME_LINE_THICKNESS       2                             //扫描框四角线的厚度
+#define SCAN_LINE_THICKNESS             2                             //扫描线厚度
 
 @interface JBScanViewController ()<AVCaptureMetadataOutputObjectsDelegate,UINavigationControllerDelegate,UIImagePickerControllerDelegate>{
     AVCaptureSession * session;      //输入输出的中间桥梁
@@ -49,6 +57,12 @@
     self.navigationItem.rightBarButtonItem = rightButton;
     //初始化UI
     [self setupScanUI];
+    //防止卡顿主线程界面跳转无延时
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        dispatch_async(dispatch_get_main_queue(),^{
+            if (!session && [self checkCameraPermissions]) [self initScan];
+        });
+    });
 }
 
 - (void)viewWillAppear:(BOOL)animated{
@@ -60,7 +74,6 @@
 
 - (void)viewDidAppear:(BOOL)animated{
     [super viewDidAppear:animated];
-    if (!session && [self checkCameraPermissions]) [self initScan];
 }
 
 - (void)viewWillDisappear:(BOOL)animated{
@@ -99,7 +112,6 @@
 
 /** 初始化相机扫描(部分UI参数更改在此方法) */
 - (void)initScan{
-    // Do any additional setup after loading the view, typically from a nib.
     //获取摄像设备
     AVCaptureDevice * device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
     //创建输入流
@@ -127,6 +139,7 @@
     AVCaptureVideoPreviewLayer * layer = [AVCaptureVideoPreviewLayer layerWithSession:session];
     layer.videoGravity=AVLayerVideoGravityResizeAspectFill;
     layer.frame=self.view.layer.bounds;
+    //隐藏引导界面
     [acView stopAnimating];
     label.hidden = YES;
     //插入相机Layer
@@ -136,9 +149,9 @@
     //扫描框动画
     [self loadScanAnimation];
     //扫描框四角动画
-    [self.view.layer addSublayer:[self getFourCornerLayerColor:[UIColor greenColor] lineWidth:2 lineLenghRatio:0.05]];
+    [self.view.layer addSublayer:[self getFourCornerLayerColor:SCAN_FRAME_COLOR lineThickness:SCAN_FRAME_LINE_THICKNESS lineLenghRatio:SCAM_FRAME_RECT_RATIO]];
     //扫描线
-    [self.view.layer addSublayer:[self getScanLine:[UIColor greenColor] height:2 duration:2.5]];
+    [self.view.layer addSublayer:[self getScanLine:SCAN_LINE_COLOR thickness:SCAN_LINE_THICKNESS duration:SCAN_LINE_ANIMATION_DURATION]];
     
     //提示文字
     UILabel *remindLabel = [[UILabel alloc] initWithFrame:CGRectMake(VIEW_SIZE_WIDTH*0.1, (VIEW_SIZE_HEIGHT-VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)/2+VIEW_SIZE_WIDTH*SCAN_RECT_RATIO+SCAN_OFFSET, VIEW_SIZE_WIDTH*0.8, 30)];
@@ -154,11 +167,11 @@
  生成扫描框四个拐角
 
  @param color 拐角颜色
- @param lineWidth 拐角线宽
+ @param lineThickness 拐角线厚度
  @param ratio 线宽与当前扫描框宽度的比例
  @return 四角Layer
  */
-- (CAShapeLayer*)getFourCornerLayerColor:(UIColor*)color lineWidth:(float)lineWidth lineLenghRatio:(float)ratio{
+- (CAShapeLayer*)getFourCornerLayerColor:(UIColor*)color lineThickness:(float)lineThickness lineLenghRatio:(float)ratio{
     //四角
     CAShapeLayer *scanBoxLayer = [[CAShapeLayer alloc] init];
     UIBezierPath *fourCorner = [UIBezierPath bezierPath];
@@ -190,7 +203,7 @@
     [fourCorner appendPath:rightUpCorner];
     [fourCorner appendPath:rightDownCorner];
     //设置线宽和颜色
-    scanBoxLayer.lineWidth = lineWidth;
+    scanBoxLayer.lineWidth = lineThickness;
     scanBoxLayer.strokeColor = color.CGColor;
     scanBoxLayer.fillColor = nil;
     //添加动画
@@ -211,19 +224,19 @@
  生成扫描线
 
  @param color 扫描线颜色
- @param height 扫描线厚度
+ @param thickness 扫描线厚度
  @param duration 扫描线动画时间
  @return 扫描线Layer
  */
-- (CAGradientLayer*)getScanLine:(UIColor*)color height:(float)height duration:(float)duration{
+- (CAGradientLayer*)getScanLine:(UIColor*)color thickness:(float)thickness duration:(float)duration{
     //扫描线生成和遮罩
     CAShapeLayer *scanlineMask = [[CAShapeLayer alloc] init];
-    UIBezierPath *scanLineMaskPath = [UIBezierPath  bezierPathWithOvalInRect:CGRectMake(0, 0, VIEW_SIZE_WIDTH*SCAN_RECT_RATIO*0.95, height)];
+    UIBezierPath *scanLineMaskPath = [UIBezierPath  bezierPathWithOvalInRect:CGRectMake(0, 0, VIEW_SIZE_WIDTH*SCAN_RECT_RATIO*0.95, thickness)];
     scanlineMask.path = scanLineMaskPath.CGPath;
     scanlineMask.strokeColor = color.CGColor;
     scanlineMask.fillColor = color.CGColor;
     CAGradientLayer *scanLineLayer = [CAGradientLayer layer];
-    scanLineLayer.frame    = CGRectMake(0, 0, VIEW_SIZE_WIDTH*SCAN_RECT_RATIO*0.95, height);
+    scanLineLayer.frame    = CGRectMake(0, 0, VIEW_SIZE_WIDTH*SCAN_RECT_RATIO*0.95, thickness);
     scanLineLayer.position = CGPointMake(VIEW_SIZE_WIDTH/2, VIEW_SIZE_HEIGHT/2+SCAN_OFFSET);
     scanLineLayer.colors = @[(__bridge id)[color colorWithAlphaComponent:0.05].CGColor,
                           (__bridge id)[color colorWithAlphaComponent:0.8].CGColor,
@@ -234,7 +247,7 @@
     scanLineLayer.mask = scanlineMask;
     //扫描线生成动画
     CABasicAnimation *scanLinePositionAnimation = [CABasicAnimation animationWithKeyPath:@"position"];
-    scanLinePositionAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(VIEW_SIZE_WIDTH/2, (VIEW_SIZE_HEIGHT-VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)/2+SCAN_OFFSET+height)];
+    scanLinePositionAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(VIEW_SIZE_WIDTH/2, (VIEW_SIZE_HEIGHT-VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)/2+SCAN_OFFSET+thickness)];
     CABasicAnimation *scanLineStartPointAnimation = [CABasicAnimation animationWithKeyPath:@"startPoint"];
     scanLineStartPointAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(0, 0)];
     CABasicAnimation *scanLineEndPointAnimation = [CABasicAnimation animationWithKeyPath:@"endPoint"];
@@ -247,7 +260,7 @@
     [scanLineLayer addAnimation:initialAnimations forKey:nil];
     //扫描动画
     CABasicAnimation *scanAnimation = [CABasicAnimation animationWithKeyPath:@"position"];
-    scanAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(VIEW_SIZE_WIDTH/2, (VIEW_SIZE_HEIGHT-VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)/2+SCAN_OFFSET-height+VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)];
+    scanAnimation.toValue = [NSValue valueWithCGPoint:CGPointMake(VIEW_SIZE_WIDTH/2, (VIEW_SIZE_HEIGHT-VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)/2+SCAN_OFFSET-thickness+VIEW_SIZE_WIDTH*SCAN_RECT_RATIO)];
     scanAnimation.duration = duration;
     scanAnimation.repeatCount = HUGE_VALF;
     scanAnimation.removedOnCompletion = NO;
